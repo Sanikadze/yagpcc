@@ -1084,3 +1084,47 @@ func TestChooseTimestampMax(t *testing.T) {
 		assert.True(t, proto.Equal(a, got))
 	})
 }
+
+func TestMergeQueryInfo_PlanJsonFields(t *testing.T) {
+	const (
+		planJSON    = `[{"Plan":{"Node Type":"Gather Motion","Total Cost":1.23}}]`
+		analyzeJSON = `[{"Plan":{"Node Type":"Gather Motion","Actual Rows":42}}]`
+	)
+
+	for _, tt := range []struct {
+		name            string
+		dest            *pbc.QueryInfo
+		source          *pbc.QueryInfo
+		wantPlanJSON    string
+		wantAnalyzeJSON string
+	}{
+		{
+			name:            "empty dest takes source values",
+			dest:            &pbc.QueryInfo{},
+			source:          &pbc.QueryInfo{PlanJson: planJSON, AnalyzeJson: analyzeJSON},
+			wantPlanJSON:    planJSON,
+			wantAnalyzeJSON: analyzeJSON,
+		},
+		{
+			name:            "filled dest is not overwritten by empty source",
+			dest:            &pbc.QueryInfo{PlanJson: planJSON, AnalyzeJson: analyzeJSON},
+			source:          &pbc.QueryInfo{},
+			wantPlanJSON:    planJSON,
+			wantAnalyzeJSON: analyzeJSON,
+		},
+		{
+			name:            "both empty stay empty",
+			dest:            &pbc.QueryInfo{},
+			source:          &pbc.QueryInfo{},
+			wantPlanJSON:    "",
+			wantAnalyzeJSON: "",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := MergeQueryInfo(tt.dest, tt.source)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantPlanJSON, tt.dest.GetPlanJson())
+			assert.Equal(t, tt.wantAnalyzeJSON, tt.dest.GetAnalyzeJson())
+		})
+	}
+}
