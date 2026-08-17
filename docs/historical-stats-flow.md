@@ -100,6 +100,17 @@ writers:
 
 An enabled `clickhouse` target requires a non-empty `addrs`; the password is read from the `YAGPCC_CH_PASSWORD` env var when omitted from the file. Connections are opened lazily, so an unreachable server at startup does not crash the process or affect the file target — its batches are dropped per-batch until it recovers. Apply the schema out of band with `yagpcc --dump-schema` / `--migrate-only` (add `--replicated` for the clustered `ReplicatedReplacingMergeTree` + `Distributed` variant). Greenplum (`type: greenplum`) is a follow-up that reuses the same fan-out and `ArchiveWriter` interface.
 
+#### Schema versions
+
+The embedded migrations carry a schema version, stored in `yagpcc._yagpcc_meta` and checked by `--verify-schema`. The current expected version is **2**:
+
+| Version | Migration | Change |
+|---------|-----------|--------|
+| 1 | `0001_init` | Initial schema: `sessions_part`, `statements_part`, `segments_part` (plus the `Distributed` wrappers in the replicated variant). |
+| 2 | `0002_plan_json` | Adds `plan_json` and `analyze_json` (`Nullable(String) CODEC(ZSTD(3))`) to `statements_part` and `segments_part`, after `plan_text`. They carry the `EXPLAIN (FORMAT JSON)` / `EXPLAIN (ANALYZE, FORMAT JSON)` payloads from `QueryInfo` and are `NULL` when the extension does not send them (and for rows written before the upgrade). |
+
+Schema v2: run `yagpcc --migrate-only` before starting the new binary. The service start path never migrates and never verifies — against a v1 database `--verify-schema` returns `ErrSchemaUpgradeRequired`, and the ClickHouse target keeps dropping every `statements`/`segments` batch because the columns it inserts do not exist.
+
 ## Metrics
 
 Writer pipeline metrics are defined in [`YagpccMetricsType`](../internal/metrics/metrics.go:23) and initialized by [`InitMetrics`](../internal/app/app.go:226):
