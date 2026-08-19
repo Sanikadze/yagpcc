@@ -107,7 +107,7 @@ The embedded migrations carry a schema version, stored in `yagpcc._yagpcc_meta` 
 | Version | Migration | Change |
 |---------|-----------|--------|
 | 1 | `0001_init` | Initial schema: `sessions_part`, `statements_part`, `segments_part` (plus the `Distributed` wrappers in the replicated variant). |
-| 2 | `0002_plan_json` | Adds `plan_json` and `analyze_json` (`Nullable(String) CODEC(ZSTD(3))`) to `statements_part` and `segments_part`, after `plan_text`. They carry the `EXPLAIN (FORMAT JSON)` / `EXPLAIN (ANALYZE, FORMAT JSON)` payloads from `QueryInfo` and are `NULL` when the extension does not send them (and for rows written before the upgrade). |
+| 2 | `0002_plan_json` | Adds `plan_json` and `analyze_json` (`Nullable(String) CODEC(ZSTD(3))`) to `statements_part` and `segments_part`, after `plan_text`. They carry the `EXPLAIN (FORMAT JSON)` / `EXPLAIN (ANALYZE, FORMAT JSON)` payloads from `QueryInfo`. The writer serializes with `EmitUnpopulated`, so rows written by the service hold an empty string (`''`) when the extension does not send a payload; `NULL` only appears in rows written before the upgrade. On the service path only `statements_part` receives the payloads — `ArchiveQuery` trims `QueryInfo` for segment rows (no `plan_text` either), so `segments_part.plan_json`/`analyze_json` stay `''`. |
 
 Schema v2: run `yagpcc --migrate-only` before starting the new binary. The service start path never migrates and never verifies — against a v1 database `--verify-schema` returns `ErrSchemaUpgradeRequired`, and the ClickHouse target keeps dropping every `statements`/`segments` batch because the columns it inserts do not exist.
 

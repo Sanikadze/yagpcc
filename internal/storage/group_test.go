@@ -1119,6 +1119,14 @@ func TestMergeQueryInfo_PlanJsonFields(t *testing.T) {
 			wantPlanJSON:    "",
 			wantAnalyzeJSON: "",
 		},
+		{
+			// Same max() idiom as PlanText/AnalyzeText: the lexicographically larger string wins.
+			name:            "two non-empty values resolve by string order",
+			dest:            &pbc.QueryInfo{PlanJson: "[a]", AnalyzeJson: "[z]"},
+			source:          &pbc.QueryInfo{PlanJson: "[b]", AnalyzeJson: "[y]"},
+			wantPlanJSON:    "[b]",
+			wantAnalyzeJSON: "[z]",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := MergeQueryInfo(tt.dest, tt.source)

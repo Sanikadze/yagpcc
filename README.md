@@ -135,7 +135,7 @@ The binary exposes schema-management subcommands (they exit after running, and a
 
 Exit codes: `0` on success, `2` on failure. The `--migrate-only`/`--verify-schema` commands always render the standalone (non-clustered) DDL; the clustered variant is bootstrapped out of band.
 
-The current schema version is **2** (adds the `plan_json` / `analyze_json` columns to `statements_part` and `segments_part`). Schema v2: run `--migrate-only` before starting the new binary — the service start path does not migrate, and `--verify-schema` reports an upgrade requirement until it is applied.
+The current schema version is **2** (adds the `plan_json` / `analyze_json` columns to `statements_part` and `segments_part`; empty string when the extension sends no payload, `NULL` only for rows written before the upgrade). Schema v2: run `--migrate-only` before starting the new binary — the service start path does not migrate, and `--verify-schema` reports an upgrade requirement until it is applied.
 
 ## Running
 

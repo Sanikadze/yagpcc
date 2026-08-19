@@ -149,6 +149,9 @@ func TestClickHouseIntegration(t *testing.T) {
 	statements := []string{
 		statementDoc(ts, 2001, ""),
 		statementDoc(ts, 2002, "hello"), // extra top-level field -> _rest
+		// Live-writer shape for an extension without FORMAT JSON support:
+		// EmitUnpopulated emits the keys as "" rather than omitting them.
+		emptyPlanJSONStatementDoc(ts, 2004),
 		// Schema v2: FORMAT JSON payloads land in their own columns.
 		planJSONStatementDoc(t, ts, 2003),
 	}
@@ -268,9 +271,9 @@ func TestClickHouseIntegration(t *testing.T) {
 		}
 	})
 
-	t.Run("documents without FORMAT JSON payloads leave NULLs", func(t *testing.T) {
-		// An older extension omits the fields entirely (protojson drops empty
-		// strings), so the columns must read back as NULL rather than "".
+	t.Run("documents without FORMAT JSON payload keys leave NULLs", func(t *testing.T) {
+		// Documents that omit the keys entirely (pre-v2 archive files) read
+		// back as NULL rather than "".
 		if got := countRows(ctx, t, conn,
 			"SELECT count() FROM yagpcc.statements_part WHERE plan_json IS NULL AND analyze_json IS NULL"); got != 2 {
 			t.Errorf("statements without plan json = %d, want 2", got)
@@ -278,6 +281,16 @@ func TestClickHouseIntegration(t *testing.T) {
 		if got := countRows(ctx, t, conn,
 			"SELECT count() FROM yagpcc.segments_part WHERE plan_json IS NULL AND analyze_json IS NULL"); got != 2 {
 			t.Errorf("segments without plan json = %d, want 2", got)
+		}
+	})
+
+	t.Run("empty FORMAT JSON payload strings are stored as empty, not NULL", func(t *testing.T) {
+		// The live writer marshals with EmitUnpopulated, so an extension that
+		// sends no payload yields "planJson": "" — stored as '' (distinct from
+		// the NULL of pre-upgrade rows).
+		if got := countRows(ctx, t, conn,
+			"SELECT count() FROM yagpcc.statements_part WHERE plan_json = '' AND analyze_json = ''"); got != 1 {
+			t.Errorf("statements with empty plan json = %d, want 1", got)
 		}
 	})
 
@@ -339,6 +352,28 @@ func statementDoc(ts string, ssid uint64, extra string) string {
   "queryStatus": "QUERY_STATUS_DONE",
   "completed": true%s
 }`, ts, ssid, tail)
+}
+
+// emptyPlanJSONStatementDoc builds a statement document the way the live
+// writer (EmitUnpopulated) emits it for an extension without FORMAT JSON
+// support: planJson/analyzeJson are present as "".
+func emptyPlanJSONStatementDoc(ts string, ssid uint64) string {
+	return fmt.Sprintf(`{
+  "clusterId": "itest",
+  "hostname": "h1",
+  "collectTime": %q,
+  "queryKey": {"ssid": %d, "tmid": 0, "ccnt": 2},
+  "queryInfo": {
+    "generator": "PLAN_GENERATOR_OPTIMIZER",
+    "queryId": "12", "planId": "321",
+    "queryText": "select 1", "planText": "plan",
+    "planJson": "", "analyzeJson": "",
+    "templateQueryText": "SELECT $1", "templatePlanText": "TPLAN",
+    "userName": "bob", "databaseName": "db", "rsgname": "rg"
+  },
+  "queryStatus": "QUERY_STATUS_DONE",
+  "completed": true
+}`, ts, ssid)
 }
 
 // segmentDoc builds a segment JSON document in the protojson (camelCase) shape
@@ -437,6 +472,9 @@ func countPlanJSONColumns(ctx context.Context, t *testing.T, conn driver.Conn) u
 // schema v2 — the exact path `yagpcc --migrate-only` takes on an existing
 // installation. Old rows must survive with NULL in the new columns and new rows
 // must carry their FORMAT JSON payloads.
+// TestClickHouseIntegrationSchemaUpgrade shares the yagpcc database with
+// TestClickHouseIntegration and drops it on entry; the two must run serially
+// (neither calls t.Parallel).
 func TestClickHouseIntegrationSchemaUpgrade(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
