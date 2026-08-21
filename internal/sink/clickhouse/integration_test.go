@@ -149,8 +149,7 @@ func TestClickHouseIntegration(t *testing.T) {
 	statements := []string{
 		statementDoc(ts, 2001, ""),
 		statementDoc(ts, 2002, "hello"), // extra top-level field -> _rest
-		// Live-writer shape for an extension without FORMAT JSON support:
-		// EmitUnpopulated emits the keys as "" rather than omitting them.
+		// Live-writer shape: EmitUnpopulated emits the keys as "" instead of omitting them.
 		emptyPlanJSONStatementDoc(ts, 2004),
 		// Schema v2: FORMAT JSON payloads land in their own columns.
 		planJSONStatementDoc(t, ts, 2003),
@@ -166,14 +165,15 @@ func TestClickHouseIntegration(t *testing.T) {
 	insertJSON(ctx, t, conn, SegmentsMapping(), segments)
 
 	t.Run("row counts and CDC columns", func(t *testing.T) {
-		if got := countRows(ctx, t, conn, "SELECT count() FROM yagpcc.sessions_part"); got != 3 {
-			t.Errorf("sessions count = %d, want 3", got)
+		// Distinct sess_ids: nothing collapses under ReplacingMergeTree, count == fixture size.
+		if got := countRows(ctx, t, conn, "SELECT count() FROM yagpcc.sessions_part"); got != uint64(len(sessions)) {
+			t.Errorf("sessions count = %d, want %d", got, len(sessions))
 		}
-		if got := countRows(ctx, t, conn, "SELECT count() FROM yagpcc.statements_part"); got != 3 {
-			t.Errorf("statements count = %d, want 3", got)
+		if got := countRows(ctx, t, conn, "SELECT count() FROM yagpcc.statements_part"); got != uint64(len(statements)) {
+			t.Errorf("statements count = %d, want %d", got, len(statements))
 		}
-		if got := countRows(ctx, t, conn, "SELECT count() FROM yagpcc.segments_part"); got != 3 {
-			t.Errorf("segments count = %d, want 3", got)
+		if got := countRows(ctx, t, conn, "SELECT count() FROM yagpcc.segments_part"); got != uint64(len(segments)) {
+			t.Errorf("segments count = %d, want %d", got, len(segments))
 		}
 		if got := countRows(ctx, t, conn,
 			"SELECT count() FROM yagpcc.sessions_part WHERE _partition = 'direct' AND _offset = 0"); got != 3 {
@@ -272,8 +272,7 @@ func TestClickHouseIntegration(t *testing.T) {
 	})
 
 	t.Run("documents without FORMAT JSON payload keys leave NULLs", func(t *testing.T) {
-		// Documents that omit the keys entirely (pre-v2 archive files) read
-		// back as NULL rather than "".
+		// Docs that omit the keys (pre-v2 archives) read back as NULL, not "".
 		if got := countRows(ctx, t, conn,
 			"SELECT count() FROM yagpcc.statements_part WHERE plan_json IS NULL AND analyze_json IS NULL"); got != 2 {
 			t.Errorf("statements without plan json = %d, want 2", got)
@@ -285,9 +284,7 @@ func TestClickHouseIntegration(t *testing.T) {
 	})
 
 	t.Run("empty FORMAT JSON payload strings are stored as empty, not NULL", func(t *testing.T) {
-		// The live writer marshals with EmitUnpopulated, so an extension that
-		// sends no payload yields "planJson": "" — stored as '' (distinct from
-		// the NULL of pre-upgrade rows).
+		// EmitUnpopulated yields "planJson": "", stored as '' (distinct from pre-upgrade NULL).
 		if got := countRows(ctx, t, conn,
 			"SELECT count() FROM yagpcc.statements_part WHERE plan_json = '' AND analyze_json = ''"); got != 1 {
 			t.Errorf("statements with empty plan json = %d, want 1", got)
@@ -354,9 +351,7 @@ func statementDoc(ts string, ssid uint64, extra string) string {
 }`, ts, ssid, tail)
 }
 
-// emptyPlanJSONStatementDoc builds a statement document the way the live
-// writer (EmitUnpopulated) emits it for an extension without FORMAT JSON
-// support: planJson/analyzeJson are present as "".
+// emptyPlanJSONStatementDoc: statement doc as the live writer emits it, planJson/analyzeJson = "".
 func emptyPlanJSONStatementDoc(ts string, ssid uint64) string {
 	return fmt.Sprintf(`{
   "clusterId": "itest",
@@ -389,9 +384,8 @@ func segmentDoc(ts string, ssid uint64) string {
 }`, ts, ssid)
 }
 
-// planJSONStatementDoc builds a statement document carrying EXPLAIN (FORMAT
-// JSON) payloads, embedding them as proper JSON string values the way protojson
-// emits them. Only mapped keys are present, so _rest must stay NULL.
+// planJSONStatementDoc: statement doc with JSON payloads embedded protojson-style;
+// only mapped keys, so _rest stays NULL.
 func planJSONStatementDoc(t *testing.T, ts string, ssid uint64) string {
 	t.Helper()
 	plan, err := json.Marshal(planJSONSample)
@@ -444,9 +438,7 @@ func planJSONSegmentDoc(t *testing.T, ts string, ssid uint64) string {
 }`, ts, ssid, plan, analyze)
 }
 
-// legacyStatementInsert writes a row through the v1 column list, i.e. without
-// naming plan_json/analyze_json, standing in for data collected before the
-// schema v2 upgrade.
+// legacyStatementInsert writes a row through the v1 column list (pre-v2 data).
 const legacyStatementInsert = `INSERT INTO yagpcc.statements_part
     (_timestamp, _partition, _offset, _idx, cluster_id, collect_time, hostname,
      sess_id, tm_id, ccnt, query_id, plan_id, query_text, plan_text, user_name, database_name)
@@ -457,8 +449,7 @@ const legacySegmentInsert = `INSERT INTO yagpcc.segments_part
      sess_id, tm_id, ccnt, dbid, segindex, query_id, plan_id, plan_text)
 VALUES (now(), 'v1', 0, 0, 'itest', now(), 'h1', 9002, 0, 1, 2, 4, 12, 321, 'plan')`
 
-// countPlanJSONColumns reports how many of the four new v2 columns exist across
-// statements_part and segments_part.
+// countPlanJSONColumns counts the v2 plan_json/analyze_json columns across both fact tables.
 func countPlanJSONColumns(ctx context.Context, t *testing.T, conn driver.Conn) uint64 {
 	t.Helper()
 	return countRows(ctx, t, conn,
@@ -467,14 +458,8 @@ func countPlanJSONColumns(ctx context.Context, t *testing.T, conn driver.Conn) u
 			"AND name IN ('plan_json', 'analyze_json')")
 }
 
-// TestClickHouseIntegrationSchemaUpgrade applies only migration 0001, fills the
-// tables with pre-v2 rows, then runs ApplyMigrations to bring the database to
-// schema v2 — the exact path `yagpcc --migrate-only` takes on an existing
-// installation. Old rows must survive with NULL in the new columns and new rows
-// must carry their FORMAT JSON payloads.
-// TestClickHouseIntegrationSchemaUpgrade shares the yagpcc database with
-// TestClickHouseIntegration and drops it on entry; the two must run serially
-// (neither calls t.Parallel).
+// TestClickHouseIntegrationSchemaUpgrade upgrades a v1 database to v2 via ApplyMigrations
+// (the --migrate-only path); shares yagpcc with TestClickHouseIntegration, so no t.Parallel.
 func TestClickHouseIntegrationSchemaUpgrade(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -486,9 +471,7 @@ func TestClickHouseIntegrationSchemaUpgrade(t *testing.T) {
 		t.Fatalf("drop database: %v", err)
 	}
 
-	// ApplyMigrations has no partial target, so the v1 baseline is created by
-	// executing the rendered 0001 file directly and recording it in the meta
-	// table the way the runner would.
+	// ApplyMigrations has no partial target: build the v1 baseline by hand and record it in meta.
 	initDDL, err := DumpMigration(0, 1, DumpOptions{RetentionDays: 60})
 	if err != nil {
 		t.Fatalf("render migration 0001: %v", err)
@@ -594,6 +577,27 @@ func TestClickHouseIntegrationSchemaUpgrade(t *testing.T) {
 			if planJSON != planJSONSample || analyzeJSON != analyzeJSONSample {
 				t.Errorf("%s payloads = (%q, %q), want the samples", tc.table, planJSON, analyzeJSON)
 			}
+		}
+	})
+
+	// Runs last: it reverts the schema this test built up.
+	t.Run("down migration drops the columns", func(t *testing.T) {
+		downDDL, err := DumpMigration(ExpectedSchemaVersion, 1, DumpOptions{RetentionDays: 60})
+		if err != nil {
+			t.Fatalf("render down migration: %v", err)
+		}
+		for _, stmt := range SplitStatements(downDDL) {
+			if err := conn.Exec(ctx, stmt); err != nil {
+				t.Fatalf("exec 0002 down statement %q: %v", stmt, err)
+			}
+		}
+		if got := countPlanJSONColumns(ctx, t, conn); got != 0 {
+			t.Errorf("plan json columns after downgrade = %d, want 0", got)
+		}
+		// The legacy rows and their plan_text are untouched by the rollback.
+		if got := countRows(ctx, t, conn,
+			"SELECT count() FROM yagpcc.statements_part WHERE sess_id = 9001 AND plan_text = 'plan'"); got != 1 {
+			t.Errorf("legacy statement after downgrade = %d, want 1", got)
 		}
 	})
 }
