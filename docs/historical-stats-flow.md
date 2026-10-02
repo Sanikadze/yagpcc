@@ -56,6 +56,7 @@ arch_config:
   queries_file: queries.json
   segments_file: segments.json
   max_file_size: 419430400
+  file_record_limit: 1048576
 ```
 
 A writer configuration section is available through [`WriterConfig`](../internal/config/config.go:54) and [`WriterTarget`](../internal/config/config.go:71). The list under `targets` is fanned out: each enabled target gets its own independent batch-processor pipeline (bounded queue, write timeout, drops), so a slow target never stalls or drops writes for the others. `targets[0]` must be an enabled `file` target.
@@ -72,6 +73,7 @@ writers:
       queries_file: queries.json
       segments_file: segments.json
       max_file_size: 419430400
+      file_record_limit: 1048576
 ```
 
 ### ClickHouse target
@@ -87,6 +89,7 @@ writers:
       queries_file: queries.json
       segments_file: segments.json
       max_file_size: 419430400
+      file_record_limit: 1048576
     - type: clickhouse
       enabled: true
       addrs: ["clickhouse-1:9000", "clickhouse-2:9000"]
@@ -128,6 +131,39 @@ starting the service. The service start path never migrates and never verifies t
 Against a v1 database `--verify-schema` returns `ErrSchemaUpgradeRequired`, and a running
 ClickHouse target drops every `statements`/`segments` batch, because the columns it inserts
 do not exist. The file target is not affected.
+
+## File archive record size
+
+Each file archive event remains one JSON line. The file writer enforces a
+configurable `file_record_limit` in bytes, including the trailing newline.
+Set it under `arch_config` or on a file target in `writers.targets`; a nonzero
+target value takes precedence over `arch_config`. Omitted or zero values use
+the inherited limit, defaulting to 1 MiB (1,048,576 bytes). Negative values are
+rejected. Keep this limit at or below the downstream transport limit (currently
+Unified Agent `file_input.max_bytes_in_line: 1024kb`).
+`max_file_size` controls file rotation and does not change this record limit.
+
+Records that fit are emitted unchanged. For oversized records, only the
+following text fields may be shortened:
+
+- Sessions: `GpStatInfo.Query`, `RunningQueryInfo.QueryText`, and
+  `RunningQueryInfo.PlanText`.
+- Queries and segments: `queryInfo.queryText`, `queryInfo.planText`, and the
+  deprecated `queryInfo.templateQueryText` / `queryInfo.templatePlanText` fields
+  when populated.
+
+Shortened values retain a UTF-8 prefix and end with `...[truncated]`. The writer
+checks the actual serialized size, accounting for JSON escaping. IDs and
+metrics retain their values, including integers above 2^53. Only the serialized
+file copy is modified; in-memory data and other archive targets are unaffected.
+A record that still cannot fit after shortening the allowed fields is skipped,
+with a warning containing its stream and size (not its contents). Later records
+in the batch are still processed.
+
+`file_archive_records_total{stream="sessions|queries|segments", outcome="unchanged|truncated|dropped"}`
+counts all records checked by the file size guard, including unchanged records.
+Outcomes describe size-limit processing, not confirmation of delivery.
+Already truncated historical records cannot be recovered by this change.
 
 ## Metrics
 
