@@ -125,6 +125,8 @@ Values to expect in the new columns:
 - `NULL` - the row was written before the upgrade to v2.
 - `segments_part` always holds `''`: `ArchiveQuery` trims `QueryInfo` for segment rows
   (they do not carry `plan_text` either).
+- `SK_AGGREGATED` rows carry the first non-empty `plan_json`/`analyze_json` seen in the
+  bucket, the same way `plan_text` is taken from the first query of the bucket.
 
 Operator note for the upgrade: run `yagpcc --migrate-only` with the new binary **before**
 starting the service. The service start path never migrates and never verifies the schema.
