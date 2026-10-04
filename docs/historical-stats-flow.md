@@ -153,6 +153,9 @@ following text fields may be shortened:
 - Queries and segments: `queryInfo.queryText`, `queryInfo.planText`, and the
   deprecated `queryInfo.templateQueryText` / `queryInfo.templatePlanText` fields
   when populated.
+- Before any text is shortened, `queryInfo.analyzeJson` and then `queryInfo.planJson`
+  are dropped whole (set to `''`) while the record is still over the limit: a cut JSON
+  plan would be unparseable. The ClickHouse target keeps the full payloads.
 
 Shortened values retain a UTF-8 prefix and end with `...[truncated]`. The writer
 checks the actual serialized size, accounting for JSON escaping. IDs and
